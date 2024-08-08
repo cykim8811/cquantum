@@ -456,6 +456,14 @@ class Executer:
                 return res
             self.execute(node.next, new_context)
         return res
+    
+    def execute_While(self, node: c_ast.While, context: Context):
+        new_context = context.create_child()
+        while self.evaluate(node.cond, new_context):
+            res = self.execute(node.stmt, new_context)
+            if res is not None:
+                return res
+        return res
 
     def evaluate(self, node, context: Context, left=False):
         if isinstance(node, c_ast.ID):
@@ -486,9 +494,7 @@ class Executer:
         
         ftncall = c_ast.FuncCall(c_ast.ID('main'), c_ast.ExprList([]))
         ret = self.execute(ftncall, context)
-        print(ret)
-
-        print(context)
+        print(f"Program exited with code {ret}")
 
 
 if __name__ == '__main__':
