@@ -90,29 +90,24 @@ class Context:
     
     def __getitem__(self, key: str|Address) -> Any:
         if isinstance(key, Address):
-            print("HERE", key, key + 1, key.size)
             return int.from_bytes(self.memory.get(key, key.size), 'little')
         if key in self.vars:
             var = self.vars[key]
             if '*' in var.vartype:
-                val = [int.from_bytes(self.memory.get(var.ptr+i, Memory.pointer_size), 'little') for i in range(var.count)]
-                val = [Address(v, Memory.pointer_size) for v in val]
-                if var.count > 1: return val
-                else: return val[0]
+                return Address(int.from_bytes(self.memory.get(var.ptr, Memory.pointer_size), 'little'), Memory.pointer_size)
+            elif var.count > 1:
+                size = self.get_type_size(var.vartype)
+                return Address(var.ptr, size)
             elif var.vartype in ['int', 'long', 'short', 'char']:
                 size = self.get_type_size(var.vartype)
-                val = [int.from_bytes(self.memory.get(var.ptr+i, size), 'little', signed=True) for i in range(var.count)]
-                return val if var.count > 1 else val[0]
+                return int.from_bytes(self.memory.get(var.ptr, size), 'little', signed=True)
             elif var.vartype in ['unsigned int', 'unsigned long', 'unsigned short', 'unsigned char']:
                 size = self.get_type_size(var.vartype[9:])
-                val = [int.from_bytes(self.memory.get(var.ptr+i, size), 'little', signed=False) for i in range(var.count)]
-                return val if var.count > 1 else val[0]
+                return int.from_bytes(self.memory.get(var.ptr, size), 'little', signed=False)
             elif var.vartype == 'float':
-                val = [struct.unpack('f', self.memory.get(var.ptr+i, 4))[0] for i in range(var.count)]
-                return val if var.count > 1 else val[0]
+                return struct.unpack('f', self.memory.get(var.ptr, 4))[0]
             elif var.vartype == 'double':
-                val = [struct.unpack('d', self.memory.get(var.ptr+i, 8))[0] for i in range(var.count)]
-                return val if var.count > 1 else val[0]
+                return struct.unpack('d', self.memory.get(var.ptr, 8))[0]
             elif var.vartype == 'function':
                 return self.memory.functions[var.ptr]
             else:
@@ -174,9 +169,17 @@ class Context:
         del self.vars[key]
 
     def get_pointer(self, key: str) -> Address:
+        if key not in self.vars:
+            if self.parent is not None:
+                return self.parent.get_pointer(key)
+            raise KeyError('Segmentation fault')
         return Address(self.vars[key].ptr, Memory.pointer_size)
 
     def get_from_pointer(self, key: str) -> Any:
+        if key not in self.vars:
+            if self.parent is not None:
+                return self.parent.get_from_pointer(key)
+            raise KeyError('Segmentation fault')
         addr = self[key]
         size = self.get_type_size(self.vars[key].vartype)
         return self[Address(addr, size)]
@@ -197,6 +200,30 @@ class Context:
 class Executer:
     def __init__(self, ast: c_ast.Node):
         self.ast = ast
+        self.external_functions = ['printf']
+    
+    def read_string(self, addr: Address|int, context: Context):
+        res = ""
+        i = 0
+        while i < 100:
+            v = context[addr + i]
+            res += chr(v)
+            if v == 0:
+                break
+            i += 1
+        return res
+
+    def call_external(self, name: str, context: Context, args: list):
+        if name == 'printf':
+            fmt = self.read_string(args[0], context)
+            arg_value = args[1:]
+            for i, v in enumerate(arg_value):
+                if isinstance(v, Address):
+                    arg_value[i] = self.read_string(v, context)
+            print(fmt % tuple(arg_value))
+
+        else:
+            raise NotImplementedError(name)
 
     def execute_FileAST(self, node: c_ast.FileAST, context: Context):
         for ext in node.ext:
@@ -235,12 +262,20 @@ class Executer:
             addr = context.assign(name, type_name, length)
             if node.init:
                 res = self.execute(node.init, context)
-                for i, val in enumerate(res):
-                    context[addr + i] = val
+                i = 0
+                while i < 5:
+                    context[addr + i] = context[res + i]
+                    if context[res + i] == 0:
+                        break
+                    i += 1
         else:
             raise NotImplementedError(node.type.__class__.__name__)
 
         return res
+
+    def execute_DeclList(self, node: c_ast.DeclList, context: Context):
+        for decl in node.decls:
+            self.execute(decl, context)
 
     def execute_ArrayRef(self, node: c_ast.ArrayRef, context: Context, left=False):
         if left:
@@ -249,7 +284,7 @@ class Executer:
             new_addr = addr + index
             return new_addr
         else:
-            addr = self.evaluate(node.name, context)
+            addr = self.evaluate(node.name, context, left=True)
             index = self.evaluate(node.subscript, context)
             new_addr = addr + index
             return context[new_addr]
@@ -287,6 +322,22 @@ class Executer:
             return not val
         elif node.op == '~':
             return ~val
+        elif node.op == 'p++':
+            val_left = self.evaluate(node.expr, context, left=True)
+            context[val_left] += 1
+            return val
+        elif node.op == 'p--':
+            val_left = self.evaluate(node.expr, context, left=True)
+            context[val_left] -= 1
+            return val
+        elif node.op == '++':
+            val_left = self.evaluate(node.expr, context, left=True)
+            context[val_left] += 1
+            return context[val_left]
+        elif node.op == '--':
+            val_left = self.evaluate(node.expr, context, left=True)
+            context[val_left] -= 1
+            return context[val_left]
         else:
             raise NotImplementedError(node.op)
     
@@ -333,6 +384,8 @@ class Executer:
             raise NotImplementedError(node.op)
     
     def execute_Compound(self, node: c_ast.Compound, context: Context):
+        if node.block_items is None:
+            return
         for decl in node.block_items:
             if isinstance(decl, c_ast.Return):
                 return self.execute(decl, context)
@@ -347,6 +400,14 @@ class Executer:
             return float(node.value)
         elif node.type == 'char':
             return ord(node.value[1])
+        elif node.type == 'string':
+            val = node.value[1:-1]
+            str_hash = hash(val)
+            if f'str_{str_hash}' not in context.vars:
+                addr = context.assign(f'str_{str_hash}', 'char', len(val))
+                for i, c in enumerate(val):
+                    context[addr + i] = ord(c)
+            return context.vars[f'str_{str_hash}'].ptr
         else:
             raise NotImplementedError(node.type)
     
@@ -355,13 +416,19 @@ class Executer:
         if node.op == '=':
             addr = self.evaluate(node.lvalue, context, left=True)
             context[addr] = val
+        elif node.op == '+=':
+            addr = self.evaluate(node.lvalue, context, left=True)
+            context[addr] += val
+        elif node.op == '-=':
+            addr = self.evaluate(node.lvalue, context, left=True)
+            context[addr] -= val
         else:
             raise NotImplementedError(node.op)
 
-        print(context)
-
     def execute_FuncCall(self, node: c_ast.FuncCall, context: Context):
-        args = [self.execute(arg, context) for arg in node.args.exprs]
+        args = [self.evaluate(arg, context) for arg in node.args.exprs]
+        if node.name.name in self.external_functions:
+            return self.call_external(node.name.name, context, args)
         ftn = context[node.name.name]
         new_context = context.create_child()
         for i, arg in enumerate(args):
@@ -371,6 +438,24 @@ class Executer:
     
     def execute_Return(self, node: c_ast.Return, context: Context):
         return self.evaluate(node.expr, context)
+    
+    def execute_If(self, node: c_ast.If, context: Context):
+        new_context = context.create_child()
+        if self.evaluate(node.cond, new_context):
+            return self.execute(node.iftrue, new_context)
+        else:
+            if node.iffalse is not None:
+                return self.execute(node.iffalse, new_context)
+    
+    def execute_For(self, node: c_ast.For, context: Context):
+        new_context = context.create_child()
+        self.execute(node.init, new_context)
+        while self.evaluate(node.cond, new_context):
+            res = self.execute(node.stmt, new_context)
+            if res is not None:
+                return res
+            self.execute(node.next, new_context)
+        return res
 
     def evaluate(self, node, context: Context, left=False):
         if isinstance(node, c_ast.ID):

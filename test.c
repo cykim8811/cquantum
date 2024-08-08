@@ -1,14 +1,22 @@
 
 #include <stdio.h>
 
+char* res;
 
-int res = 0;
 
 int main() {
-    int a[5] = {1, 2, 3, 4, 5};
-    int *b = &a;
+    
+    int a = 0;
+    int b = 1;
+    
+    int temp = 0;
+    for (int i = 0; i < 10; i++) {
+        temp = a;
+        a = b;
+        b = temp + b;
+    }
 
-    *b = 10;
+    printf("str %s str", "hi");
 
     return 0;
 }
