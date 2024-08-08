@@ -246,14 +246,14 @@ class Executer:
         if isinstance(node.type, c_ast.TypeDecl):
             context.assign(node.name, self.execute(node.type, context), 1)
             if node.init:
-                res = self.execute(node.init, context)
+                res = self.evaluate(node.init, context)
                 context[node.name] = res
         elif isinstance(node.type, c_ast.PtrDecl):
             name = node.name
             type_name = self.execute(node.type, context)
             context.assign(name, type_name, 1)
             if node.init:
-                res = self.execute(node.init, context)
+                res = self.evaluate(node.init, context)
                 context[name] = res
         elif isinstance(node.type, c_ast.ArrayDecl):
             name = node.name
@@ -261,7 +261,7 @@ class Executer:
             type_name = self.execute(node.type.type, context)
             addr = context.assign(name, type_name, length)
             if node.init:
-                res = self.execute(node.init, context)
+                res = self.evaluate(node.init, context)
                 i = 0
                 while i < 5:
                     context[addr + i] = context[res + i]
