@@ -2,12 +2,26 @@
 from pycparser import CParser, c_ast
 import sys
 from typing import Any
-import ctypes
 
 
 def parse_file(filename):
     with open(filename, 'r') as f:
-        code = f.readlines()
+        code = f.read()
+    type_map = {
+        ' bool': ' char',
+        ' int8_t': ' char',
+        ' int16_t': ' short',
+        ' int32_t': ' int',
+        ' int64_t': ' long long',
+        ' uint8_t': ' unsigned char',
+        ' uint16_t': ' unsigned short',
+        ' uint32_t': ' unsigned int',
+        ' uint64_t': ' unsigned long long',
+        ' float32_t': ' float',
+    }
+    for key in type_map:
+        code = code.replace(key, type_map[key])
+    code = code.split('\n')
     code = [line for line in code if not line.startswith('#')]
     code = [line.split('//')[0] for line in code]
     code = [line.strip() for line in code if line.strip()]
@@ -161,7 +175,19 @@ class Context:
             return Memory.pointer_size
         if vartype == "function":
             return 1
-        return ctypes.sizeof(getattr(ctypes, 'c_' + vartype))
+        size_map = {
+            'int': 4,
+            'long': 4,
+            'short': 2,
+            'char': 1,
+            'unsigned int': 4,
+            'unsigned long': 4,
+            'unsigned short': 2,
+            'unsigned char': 1,
+            'float': 4,
+            'double': 8
+        }
+        return size_map[vartype]
     
     def free(self, key: str):
         var = self.vars[key]
@@ -230,7 +256,7 @@ class Executer:
             self.execute(ext, context)
     
     def execute_IdentifierType(self, node: c_ast.IdentifierType, context: Context):
-        return node.names[0]
+        return ' '.join(node.names)
 
     def execute_TypeDecl(self, node: c_ast.TypeDecl, context: Context):
         return self.execute(node.type, context)

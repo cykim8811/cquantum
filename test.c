@@ -1,18 +1,11 @@
 
 #include <stdio.h>
+#include <stdint.h>
 
 int main() {
-    int a = 0;
-    int b = 1;
+    uint8_t a = 0;
 
-    for (int i = 0; i < 10; i++) {
-        int temp = a;
-        a = b;
-        b = temp + b;
-    }
-
-    printf("a: %d\n", a);
-    printf("b: %d\n", b);
+    printf("%d", a);
 
     return 0;
 }
